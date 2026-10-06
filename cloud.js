@@ -5,7 +5,7 @@ const app=window.bnbApp;
 const status=text=>{el('cloudStatus').textContent=text;el('saveStatus').textContent=text};
 function cacheKey(){return user?'dawuan-bnb-account-'+user.uid:null}
 function draft(pending){if(!user)return;try{localStorage.setItem(cacheKey(),JSON.stringify({payload:app.snapshot(),pending,revision,savedAt:Date.now()}))}catch{status('本機備份失敗；請匯出填答檔，並確認雲端同步狀態。')}}
-function noteError(e){if(e.message==='CONFLICT')return '另一部裝置已更新資料。已保留本機填答，請匯出後重新載入雲端版本。';return '尚未同步至雲端。請確認網路與登入狀態，再按「重試同步」；也可先匯出填答檔。'}
+function noteError(e){if(e.message==='CONFLICT')return '另一部裝置已更新資料。已保留本機填答，請匯出後重新載入雲端版本。';return '尚未同步至雲端。請確認網路與登入狀態，恢復連線後會自動同步；也可先匯出填答檔。'}
 async function flush(){
   if(!ready||!user||conflict)return;
   if(busy){queued=true;return}
@@ -27,11 +27,9 @@ async function flush(){
 }
 window.addEventListener('bnb:changed',()=>{if(!ready||!user)return;sequence++;draft(true);status(navigator.onLine?'修改已備份；即將自動同步…':'離線中，修改已暫存本機；恢復連線後同步。');clearTimeout(window.bnbSyncTimer);window.bnbSyncTimer=setTimeout(flush,1200)});
 window.addEventListener('online',flush);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'&&ready&&JSON.stringify(app.snapshot())!==lastSavedPayload){sequence++;draft(true);flush()}});
-el('retryCloud').onclick=flush;
 el('reloadCloud').onclick=()=>{if(confirm('本機未同步內容請先匯出。確定重新載入雲端版本？'))location.reload()};
 el('signOutCloud').onclick=async()=>{if(busy){status('正在同步，請稍後再登出。');return}let cached;try{cached=JSON.parse(localStorage.getItem(cacheKey()))}catch{}if(cached?.pending&&!confirm('有尚未同步的填答，請先匯出備份。仍要登出？'))return;await sdk.signOut(auth)};
 el('useLocalDraft').onclick=()=>{try{const cached=JSON.parse(localStorage.getItem(cacheKey()));if(!cached?.payload)return;if(!confirm('將以此帳號的本機備份取代目前雲端內容，是否繼續？'))return;app.restore(cached.payload);el('useLocalDraft').hidden=true;window.dispatchEvent(new Event('bnb:changed'))}catch{status('無法恢復本機備份，請匯入填答檔。')}};
-el('importOldDraft').onclick=()=>{try{const old=localStorage.getItem('dawuan-bnb-model-v1');if(!old){status('這個瀏覽器沒有舊版填答；可改用匯入填答檔。');return}if(!confirm('將這個瀏覽器的舊版填答載入目前帳號並同步，是否繼續？'))return;app.restore(JSON.parse(old));window.dispatchEvent(new Event('bnb:changed'))}catch{status('無法讀取舊版填答，請使用匯入功能。')}};
 function resetForm(){app.blank();app.update()}
 async function loadUser(u){
   epoch++;user=u;ready=false;conflict=false;sequence=0;revision=0;resetForm();el('teacherPanel').hidden=true;el('useLocalDraft').hidden=true;el('signOutCloud').hidden=!u;el('loginCloud').hidden=!!u;app.lock(true);
