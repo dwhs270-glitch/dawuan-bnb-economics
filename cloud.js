@@ -1,6 +1,6 @@
 import { firebaseConfig, teacherEmail } from './cloud-config.js';
 const el=id=>document.getElementById(id);
-let user=null,ready=false,revision=0,auth,db,sdk,ref,busy=false,queued=false,conflict=false,sequence=0,epoch=0;
+let user=null,ready=false,revision=0,auth,db,sdk,ref,busy=false,queued=false,conflict=false,sequence=0,epoch=0,lastSavedPayload='';
 const app=window.bnbApp;
 const status=text=>{el('cloudStatus').textContent=text;el('saveStatus').textContent=text};
 function cacheKey(){return user?'dawuan-bnb-account-'+user.uid:null}
@@ -19,14 +19,14 @@ async function flush(){
       status('正在同步至雲端…');
       await sdk.runTransaction(db,async tx=>{const current=await tx.get(docRef);if((current.exists()?current.data().revision:0)!==expected)throw Error('CONFLICT');tx.set(docRef,data)});
       if(epoch!==startEpoch)return;
-      revision=expected+1;queued=queued||sequence!==sentSequence;
+      revision=expected+1;lastSavedPayload=payload;queued=queued||sequence!==sentSequence||JSON.stringify(app.snapshot())!==payload;
       draft(queued);status(queued?'正在儲存最新修改…':'已自動儲存至雲端 · '+new Date().toLocaleTimeString('zh-TW'));
     }while(queued&&navigator.onLine&&epoch===startEpoch);
   }catch(e){if(epoch===startEpoch){draft(true);conflict=e.message==='CONFLICT';el('reloadCloud').hidden=!conflict;status(noteError(e))}}
   finally{busy=false}
 }
 window.addEventListener('bnb:changed',()=>{if(!ready||!user)return;sequence++;draft(true);status(navigator.onLine?'修改已備份；即將自動同步…':'離線中，修改已暫存本機；恢復連線後同步。');clearTimeout(window.bnbSyncTimer);window.bnbSyncTimer=setTimeout(flush,1200)});
-window.addEventListener('online',flush);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'&&ready){draft(true);flush()}});
+window.addEventListener('online',flush);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden'&&ready&&JSON.stringify(app.snapshot())!==lastSavedPayload){sequence++;draft(true);flush()}});
 el('retryCloud').onclick=flush;
 el('reloadCloud').onclick=()=>{if(confirm('本機未同步內容請先匯出。確定重新載入雲端版本？'))location.reload()};
 el('signOutCloud').onclick=async()=>{if(busy){status('正在同步，請稍後再登出。');return}let cached;try{cached=JSON.parse(localStorage.getItem(cacheKey()))}catch{}if(cached?.pending&&!confirm('有尚未同步的填答，請先匯出備份。仍要登出？'))return;await sdk.signOut(auth)};
@@ -40,7 +40,8 @@ async function loadUser(u){
   try{
     const d=await sdk.getDoc(ref);if(currentEpoch!==epoch)return;
     if(d.exists()){app.restore(JSON.parse(d.data().payload));revision=d.data().revision}
-    let cached;try{cached=JSON.parse(localStorage.getItem(cacheKey()))}catch{}
+    lastSavedPayload=JSON.stringify(app.snapshot());
+    let cached;try{cached=JSON.parse(localStorage.getItem(cacheKey()));if(cached?.pending&&JSON.stringify(cached.payload)===lastSavedPayload){cached.pending=false;draft(false)}}catch{}
     el('useLocalDraft').hidden=!cached?.pending;
     ready=true;app.lock(false);status(d.exists()?'已載入雲端填答；修改後自動儲存。':'登入完成，開始填寫後會自動儲存至雲端。');
     if(cached?.pending)status('已載入雲端版本，另有本機未同步備份；可選「恢復本機備份」。');
