@@ -46,7 +46,22 @@ async function loadUser(u){
     const teacherDoc=await sdk.getDoc(sdk.doc(db,'bnbTeachers',u.uid));if(currentEpoch===epoch&&(teacherDoc.exists()||u.email===teacherEmail)){el('teacherPanel').hidden=false;loadTeacher()}
   }catch(e){status('無法讀取雲端資料，填寫暫停以避免覆蓋。請確認網路後重新整理。')}
 }
-async function loadTeacher(){el('teacherList').textContent='正在讀取各組成果…';try{const docs=await sdk.getDocs(sdk.collection(db,'bnbResponses'));el('teacherList').replaceChildren();if(docs.empty){el('teacherList').textContent='尚未有學生填答。';return}docs.docs.sort((a,b)=>(a.data().groupLabel||'').localeCompare(b.data().groupLabel||'','zh-TW')).forEach(d=>{const v=d.data(),box=document.createElement('details'),title=document.createElement('summary'),pre=document.createElement('pre');title.textContent=(v.groupLabel||'未填組別')+'｜'+(v.bnbName||'未命名民宿')+'｜更新：'+(v.updatedAt?.toDate().toLocaleString('zh-TW')||'—');pre.textContent=v.summary;pre.style.whiteSpace='pre-wrap';pre.style.overflowWrap='anywhere';box.style.marginBottom='16px';box.append(title,pre);el('teacherList').append(box)})}catch{el('teacherList').textContent='無法查看各組資料，請確認教師帳號權限。'}}
+async function deleteResponse(docRef, expectedRevision, label, button){
+  if(!confirm('確定刪除「'+label+'」的雲端填答？\n此操作無法復原，請先確認已匯出所需成果。'))return;
+  button.disabled=true;
+  try{
+    await sdk.runTransaction(db,async tx=>{
+      const current=await tx.get(docRef);
+      if(!current.exists())return;
+      if(current.data().revision!==expectedRevision)throw Error('CONFLICT');
+      tx.delete(docRef);
+    });
+    await loadTeacher();
+    if(docRef.id===user?.uid)await loadUser(user);
+    status('已刪除「'+label+'」的雲端填答。');
+  }catch(e){button.disabled=false;status(e.message==='CONFLICT'?'資料已被更新，未執行刪除。請更新各組資料後重新確認。':'刪除未完成，請確認教師權限與網路後再試。')}
+}
+async function loadTeacher(){el('teacherList').textContent='正在讀取各組成果…';try{const docs=await sdk.getDocs(sdk.collection(db,'bnbResponses'));el('teacherList').replaceChildren();if(docs.empty){el('teacherList').textContent='尚未有學生填答。';return}docs.docs.sort((a,b)=>(a.data().groupLabel||'').localeCompare(b.data().groupLabel||'','zh-TW')).forEach(d=>{const v=d.data(),box=document.createElement('details'),title=document.createElement('summary'),pre=document.createElement('pre');title.textContent=(v.groupLabel||'未填組別')+'｜'+(v.bnbName||'未命名民宿')+'｜更新：'+(v.updatedAt?.toDate().toLocaleString('zh-TW')||'—');pre.textContent=v.summary;pre.style.whiteSpace='pre-wrap';pre.style.overflowWrap='anywhere';box.style.marginBottom='16px';const remove=document.createElement('button');remove.type='button';remove.textContent='刪除此組填答';remove.style.color='var(--red)';const label=(v.groupLabel||'未填組別')+'｜'+(v.bnbName||'未命名民宿');remove.setAttribute('aria-label','刪除 '+label+' 的填答');remove.onclick=()=>deleteResponse(d.ref,v.revision,label,remove);box.append(title,pre,remove);el('teacherList').append(box)})}catch{el('teacherList').textContent='無法查看各組資料，請確認教師帳號權限。'}}
 el('refreshTeacher').onclick=loadTeacher;
 app.lock(true);
 if(!firebaseConfig){status('雲端服務尚未設定。此為修改稿，尚未啟用跨裝置儲存。');el('loginCloud').disabled=true;}
