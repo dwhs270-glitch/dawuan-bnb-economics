@@ -122,4 +122,20 @@ window.bnbApp={snapshot,restore,update,lock:locked=>{document.getElementById('st
  window.bnbLearning={navigate,refresh,issues,steps};navigate(0,false);
 })();
 
-</script><script type="module" src="./cloud.js?v=20261007-mobile-login"></script></body></html>
+// Embedded browsers cannot reliably complete Google OAuth; guide students first.
+(function(){
+ const ua=navigator.userAgent;
+ const embedded=/Line\/|FBAN|FBAV|Instagram|GSA\/|;\s*wv\)|\bwv\b/i.test(ua)||(/iPhone|iPad|iPod/i.test(ua)&&/AppleWebKit/i.test(ua)&&!/Safari|CriOS|FxiOS|EdgiOS/i.test(ua));
+ const panel=document.createElement('div');panel.id='browserLoginHelp';panel.className='note';panel.hidden=!embedded;
+ const title=document.createElement('strong');title.textContent='請用 Chrome 或 Safari 登入';
+ const help=document.createElement('p');help.textContent='您目前可能在 LINE 或其他 App 的內建瀏覽器。請開啟畫面上的選單，選「以瀏覽器開啟」或「在 Safari 開啟」，再按 Google 登入。若找不到選項，請複製下方網址，貼到 Chrome 或 Safari 的網址列。';
+ const field=document.createElement('input');field.type='text';field.readOnly=true;field.value=location.origin+location.pathname;field.setAttribute('aria-label','網站網址，可複製到 Chrome 或 Safari');
+ const copy=document.createElement('button');copy.type='button';copy.textContent='複製網站網址';
+ const state=document.createElement('p');state.className='hint';state.setAttribute('role','status');
+ copy.onclick=async()=>{try{if(!navigator.clipboard?.writeText)throw Error('clipboard unavailable');await navigator.clipboard.writeText(field.value);state.textContent='已複製，請開啟 Chrome 或 Safari，貼上網址後登入。'}catch{field.focus();field.select();state.textContent='請長按已選取的網址，選擇複製，再貼到 Chrome 或 Safari。'}};
+ panel.append(title,help,field,copy,state);document.getElementById('cloudPanel').append(panel);
+ window.bnbLoginEnvironment={embedded,showHelp:()=>{panel.hidden=false;panel.scrollIntoView({block:'center'});state.textContent='請在 Chrome 或 Safari 開啟本網站，便可使用 Google 登入。'}};
+ if(embedded){const login=document.getElementById('loginCloud');login.textContent='查看手機登入方式';login.onclick=()=>window.bnbLoginEnvironment.showHelp()}
+})();
+
+</script><script type="module" src="./cloud.js?v=20261007-inapp-guide"></script></body></html>
