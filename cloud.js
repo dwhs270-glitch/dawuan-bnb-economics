@@ -2,6 +2,12 @@ import { firebaseConfig, teacherEmail } from './cloud-config.js';
 const el=id=>document.getElementById(id);
 let user=null,ready=false,revision=0,auth,db,sdk,ref,busy=false,queued=false,conflict=false,sequence=0,epoch=0,lastSavedPayload='';
 const app=window.bnbApp;
+let loadingUid=null,loginPending=false,loginWatchdog=null;
+function deadline(task,ms=20000){let timer;return Promise.race([task,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('READ_TIMEOUT')),ms)})]).finally(()=>clearTimeout(timer))}
+function loginError(e){return ({'auth/popup-blocked':'手機未開啟登入視窗，請用 Chrome 或 Safari 開啟網站，再按 Google 登入。','auth/popup-closed-by-user':'登入視窗已關閉。若已選完帳號，請返回網站稍候；仍未登入時請再試一次。','auth/network-request-failed':'登入連線中斷，請確認網路後再次登入。','auth/web-storage-unsupported':'瀏覽器無法保存登入狀態，請改用一般模式的 Chrome 或 Safari。','auth/unauthorized-domain':'此網址尚未獲准登入，請通知老師。','auth/operation-not-supported-in-this-environment':'請用 Chrome 或 Safari 開啟網站再登入。'})[e.code]||'登入未完成，請用 Chrome 或 Safari 開啟網站後再次登入。'}
+function resumeLogin(){if(auth?.currentUser&&!ready&&loadingUid!==auth.currentUser.uid)handleUser(auth.currentUser)}
+async function handleUser(u){if(u&&loadingUid===u.uid)return;if(u&&ready&&user?.uid===u.uid)return;clearTimeout(loginWatchdog);loginPending=false;el('loginCloud').disabled=false;loadingUid=u?.uid||null;try{await loadUser(u)}finally{if(loadingUid===u?.uid)loadingUid=null}}
+window.addEventListener('focus',resumeLogin);window.addEventListener('online',resumeLogin);document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')resumeLogin()});
 const status=text=>{el('cloudStatus').textContent=text;el('saveStatus').textContent=text};
 function cacheKey(){return user?'dawuan-bnb-account-'+user.uid:null}
 function draft(pending){if(!user)return;try{localStorage.setItem(cacheKey(),JSON.stringify({payload:app.snapshot(),pending,revision,savedAt:Date.now()}))}catch{status('本機備份失敗；請匯出填答檔，並確認雲端同步狀態。')}}
@@ -36,15 +42,15 @@ async function loadUser(u){
   if(!u){el('cloudUser').textContent='尚未登入';status('請登入 Google 帳號，以跨裝置接續填答。');return}
   el('cloudUser').textContent=u.displayName||u.email||'已登入';status('正在讀取這個帳號的雲端填答…');const currentEpoch=epoch;ref=sdk.doc(db,'bnbResponses',u.uid);
   try{
-    const d=await sdk.getDoc(ref);if(currentEpoch!==epoch)return;
+    const d=await deadline(sdk.getDoc(ref));if(currentEpoch!==epoch)return;
     if(d.exists()){app.restore(JSON.parse(d.data().payload));revision=d.data().revision}
     lastSavedPayload=JSON.stringify(app.snapshot());
     let cached;try{cached=JSON.parse(localStorage.getItem(cacheKey()));if(cached?.pending&&JSON.stringify(cached.payload)===lastSavedPayload){cached.pending=false;draft(false)}}catch{}
     el('useLocalDraft').hidden=!cached?.pending;
     ready=true;app.lock(false);status(d.exists()?'已載入雲端填答；修改後自動儲存。':'登入完成，開始填寫後會自動儲存至雲端。');
     if(cached?.pending)status('已載入雲端版本，另有本機未同步備份；可選「恢復本機備份」。');
-    const teacherDoc=await sdk.getDoc(sdk.doc(db,'bnbTeachers',u.uid));if(currentEpoch===epoch&&(teacherDoc.exists()||u.email===teacherEmail)){el('teacherPanel').hidden=false;loadTeacher()}
-  }catch(e){status('無法讀取雲端資料，填寫暫停以避免覆蓋。請確認網路後重新整理。')}
+    if(u.email===teacherEmail){el('teacherPanel').hidden=false;loadTeacher()}else{try{const teacherDoc=await deadline(sdk.getDoc(sdk.doc(db,'bnbTeachers',u.uid)));if(currentEpoch===epoch&&teacherDoc.exists()){el('teacherPanel').hidden=false;loadTeacher()}}catch{/* Teacher-role read must not block student access. */}}
+  }catch(e){if(currentEpoch!==epoch)return;el('loginCloud').hidden=false;el('loginCloud').disabled=false;status(e.message==='READ_TIMEOUT'?'已登入，但讀取舊填答逾時。請確認網路，再按 Google 登入繼續讀取；尚未載入前不會覆蓋原有紀錄。':'已登入，但無法讀取雲端資料。請確認網路，再按 Google 登入繼續讀取；原有紀錄未被覆蓋。')}
 }
 async function deleteResponse(docRef, expectedRevision, label, button){
   if(!confirm('確定刪除「'+label+'」的雲端填答？\n此操作無法復原，請先確認已匯出所需成果。'))return;
@@ -67,8 +73,8 @@ app.lock(true);
 if(!firebaseConfig){status('雲端服務尚未設定。此為修改稿，尚未啟用跨裝置儲存。');el('loginCloud').disabled=true;}
 else{
   try{
-    const [a,b,c]=await Promise.all([import('https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js'),import('https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js'),import('https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js')]);sdk={...b,...c};const firebaseApp=a.initializeApp(firebaseConfig);auth=b.getAuth(firebaseApp);db=c.getFirestore(firebaseApp);
-    el('loginCloud').onclick=async()=>{try{await b.signInWithPopup(auth,new b.GoogleAuthProvider())}catch(e){status(e.code==='auth/popup-blocked'?'登入視窗被阻擋，請允許彈出視窗後重試。':'登入未完成，請重新按「Google 登入」。')}};
-    b.onAuthStateChanged(auth,loadUser);
+    const [a,b,c]=await Promise.all([import('https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js'),import('https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js'),import('https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js')]);sdk={...b,...c};const firebaseApp=a.initializeApp(firebaseConfig);auth=b.getAuth(firebaseApp);db=c.initializeFirestore(firebaseApp,{experimentalForceLongPolling:true});
+    el('loginCloud').onclick=async()=>{if(auth.currentUser){await handleUser(auth.currentUser);return}if(loginPending)return;loginPending=true;el('loginCloud').disabled=true;status('正在開啟 Google 登入，選完帳號後請返回本頁…');loginWatchdog=setTimeout(()=>{if(auth.currentUser){resumeLogin();return}loginPending=false;el('loginCloud').disabled=false;status('尚未收到登入結果。若已選完帳號，請返回本頁；仍未登入時，用 Chrome 或 Safari 開啟網站後再按 Google 登入。')},45000);try{const result=await b.signInWithPopup(auth,new b.GoogleAuthProvider());await handleUser(result.user)}catch(e){if(!auth.currentUser&&!user)status(loginError(e));else resumeLogin()}finally{clearTimeout(loginWatchdog);loginPending=false;el('loginCloud').disabled=false}};
+    b.onAuthStateChanged(auth,handleUser,e=>{status(loginError(e));el('loginCloud').disabled=false});
   }catch{status('雲端服務載入失敗，請檢查網路後重新整理。')}
 }
